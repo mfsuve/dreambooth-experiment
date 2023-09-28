@@ -1,0 +1,4 @@
+pyyaml
+transformers
+accelerate
+diffusers
