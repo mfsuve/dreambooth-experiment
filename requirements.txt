@@ -2,3 +2,7 @@ pyyaml
 transformers
 accelerate
 diffusers
+xformers
+bitsandbytes
+torchvision
+Pillow

@@ -1,13 +1,15 @@
-pretrained_model_name: "runwayml/stable-diffusion-v1-5"
+pretrained_model_name: runwayml/stable-diffusion-v1-5
+image_size: 512
 paths:
   instance_images: ./instance_images
   class_images: ./class_images
 prompts:
-  instance: "a cc lamp"
-  class: "a lamp"
+  instance: a cc lamp
+  class: a lamp
 hyperparams:
-  prior_sampling:
-    num_class_images: 50
-    sample_batch_size: 1
-  training:
-    prior_loss_weight: 1.0
+  num_class_images: 50
+  prior_loss_weight: 1.0
+  gradient_checkpointing: true
+  learning_rate: 2.0e-6
+  weight_decay: 1.0e-2
+  batch_size: 1
