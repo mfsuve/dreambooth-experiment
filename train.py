@@ -1,6 +1,8 @@
+from pathlib import Path
 from typing import Dict
 from itertools import chain
 from tqdm.auto import tqdm
+import yaml
 
 from data import DreamBoothDataset
 
@@ -9,13 +11,14 @@ from torch.utils.data import DataLoader
 import torch.nn.functional as F
 from bitsandbytes.optim import AdamW8bit
 from transformers import CLIPTextModel, CLIPTokenizer
-from diffusers import AutoencoderKL, DDPMScheduler, UNet2DConditionModel
+from diffusers import AutoencoderKL, DDIMScheduler, DDPMScheduler, UNet2DConditionModel, StableDiffusionPipeline
 
 
 class Trainer:
     def __init__(self, config: Dict):
         pretrained_model_name = config["pretrained_model_name"]
-        self.hyperparams = config["hyperparams"]
+        self.config = config
+        self.hyperparams = config["train"]["hyperparams"]
 
         self.tokenizer = CLIPTokenizer.from_pretrained(pretrained_model_name, subfolder="tokenizer")
         self.text_encoder = CLIPTextModel.from_pretrained(pretrained_model_name, subfolder="text_encoder")
@@ -56,6 +59,52 @@ class Trainer:
         pixel_values = torch.stack(pixel_values).to(memory_format=torch.contiguous_format).float()
 
         return {"input_ids": input_ids, "pixel_values": pixel_values, "size": pixel_values.shape[0]}
+
+    def save_weights(self, accelerator, epoch):
+        if not accelerator.is_main_process:
+            return
+
+        pretrained_model_name = self.config["pretrained_model_name"]
+        pipeline = StableDiffusionPipeline.from_pretrained(
+            pretrained_model_name,
+            unet=accelerator.unwrap_model(self.unet, keep_fp32_wrapper=True),
+            text_encoder=accelerator.unwrap_model(self.text_encoder, keep_fp32_wrapper=True),
+            vae=AutoencoderKL.from_pretrained(pretrained_model_name, subfolder="vae"),
+            safety_checker=None,
+            torch_dtype=torch.float16,
+        )
+        pipeline.scheduler = DDIMScheduler.from_config(pipeline.scheduler.config)
+        pipeline.enable_xformers_memory_efficient_attention()
+
+        save_path = Path(self.config["output_path"]) / str(epoch)
+        pipeline.save_pretrained(save_path)
+        with (save_path / "config.yaml").open("w") as f:
+            yaml.dump(self.config, f, default_flow_style=False)
+        print(f"Weights saved at {save_path}")
+
+        if "test" not in self.config:
+            test_config = self.config["test"]
+            pipeline = pipeline.to(accelerator.device)
+            g_cuda = torch.Generator(device=accelerator.device)
+            pipeline.set_progress_bar_config(disable=True)
+            sample_path = save_path / "samples"
+            sample_path.mkdir(parents=True, exist_ok=True)
+            with torch.autocast("cuda"), torch.inference_mode():
+                for i in tqdm(range(test_config["num_test_images"]), desc="Generating samples"):
+                    images = pipeline(
+                        test_config["test_prompt"],
+                        width=self.config["size"],
+                        height=self.config["size"],
+                        num_images_per_prompt=1,
+                        negative_prompt=test_config.get("negative_test_prompt"),
+                        guidance_scale=test_config["guidance_scale"],
+                        num_inference_steps=test_config["num_inference_steps"],
+                        generator=g_cuda,
+                    ).images
+                    images[0].save(sample_path / f"{i}.png")
+            del pipeline
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     def calculate_loss_on_batch(self, batch, dtype):
         with torch.no_grad():

@@ -1,16 +1,24 @@
 pretrained_model_name: runwayml/stable-diffusion-v1-5
 image_size: 512
-paths:
-  instance_images: ./instance_images
-  class_images: ./class_images
-prompts:
-  instance: a cc lamp
-  class: a lamp
-hyperparams:
-  num_class_images: 50
-  prior_loss_weight: 1.0
-  gradient_checkpointing: true
-  learning_rate: 2.0e-6
-  weight_decay: 1.0e-2
-  batch_size: 1
-  num_epochs: 8
+output_path: ./output
+train:
+  paths:
+    instance_images: ./instance_images
+    class_images: ./class_images
+  prompts:
+    instance: a cc lamp
+    class: a lamp
+  hyperparams:
+    num_class_images: 50
+    prior_loss_weight: 1.0
+    gradient_checkpointing: true
+    learning_rate: 2.0e-6
+    weight_decay: 1.0e-2
+    batch_size: 1
+    num_epochs: 20
+test:
+  test_prompt: sketch drawing of a cc lamp, black and white, hand drawn, pencil art
+  negative_test_prompt: realistic
+  guidance_scale: 15
+  num_inference_steps: 100
+  num_test_images: 10

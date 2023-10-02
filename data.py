@@ -12,11 +12,11 @@ class DreamBoothDataset(Dataset):
         self.tokenizer = tokenizer
         size = config["image_size"]
 
-        self.instance_images_path = list(Path(config["paths"]["instance_images"]).iterdir())
-        self.class_images_path = list(Path(config["paths"]["class_images"]).iterdir())
+        self.instance_images_path = list(Path(config['train']["paths"]["instance_images"]).iterdir())
+        self.class_images_path = list(Path(config['train']["paths"]["class_images"]).iterdir())
 
-        self.instance_prompt_ids = self.tokenize(config["prompts"]["instance"])
-        self.class_prompt_ids = self.tokenize(config["prompts"]["class"])
+        self.instance_prompt_ids = self.tokenize(config['train']["prompts"]["instance"])
+        self.class_prompt_ids = self.tokenize(config['train']["prompts"]["class"])
 
         random.shuffle(self.instance_images_path)
         self.num_instance_images = len(self.instance_images_path)

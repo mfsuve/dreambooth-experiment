@@ -12,11 +12,10 @@ from train import Trainer
 
 
 def generate_class_images(accelerator: Accelerator, config: Dict):
-    class_images_path: Path = Path(config["paths"]["class_images"])
+    class_images_path: Path = Path(config["train"]["paths"]["class_images"])
     class_images_path.mkdir(parents=True, exist_ok=True)
     current_num_class_images = len(list(class_images_path.iterdir()))
-    num_new_images = config["hyperparams"]["num_class_images"] - current_num_class_images
-    class_prompt = config["prompts"]["class"]
+    num_new_images = config["train"]["hyperparams"]["num_class_images"] - current_num_class_images
 
     if num_new_images > 0:
         torch_dtype = torch.float16 if accelerator.device.type == "cuda" else torch.float32
@@ -33,7 +32,7 @@ def generate_class_images(accelerator: Accelerator, config: Dict):
 
         with torch.autocast("cuda"), torch.inference_mode():
             for index in tqdm(range(num_new_images), desc="Generating class images"):
-                image = pipeline(class_prompt).images[0]
+                image = pipeline(config["train"]["prompts"]["class"]).images[0]
                 image_hash = hashlib.sha1(image.tobytes()).hexdigest()
                 image_filename = class_images_path / f"{current_num_class_images + index}-{image_hash}.jpg"
                 image.save(image_filename)
