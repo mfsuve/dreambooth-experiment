@@ -13,3 +13,4 @@ hyperparams:
   learning_rate: 2.0e-6
   weight_decay: 1.0e-2
   batch_size: 1
+  num_epochs: 8

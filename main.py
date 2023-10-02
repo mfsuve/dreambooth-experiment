@@ -47,6 +47,7 @@ def main(config):
     accelerator = Accelerator()
     generate_class_images(accelerator, config)
     trainer = Trainer(config)
+    trainer.train(accelerator)
 
 
 if __name__ == "__main__":

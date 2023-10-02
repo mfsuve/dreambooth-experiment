@@ -15,8 +15,8 @@ class DreamBoothDataset(Dataset):
         self.instance_images_path = list(Path(config["paths"]["instance_images"]).iterdir())
         self.class_images_path = list(Path(config["paths"]["class_images"]).iterdir())
 
-        self.instance_prompt = config["prompts"]["instance"]
-        self.class_prompt = config["prompts"]["class"]
+        self.instance_prompt_ids = self.tokenize(config["prompts"]["instance"])
+        self.class_prompt_ids = self.tokenize(config["prompts"]["class"])
 
         random.shuffle(self.instance_images_path)
         self.num_instance_images = len(self.instance_images_path)
@@ -36,23 +36,19 @@ class DreamBoothDataset(Dataset):
     def __len__(self):
         return self.length
 
-    def process_image_prompt_pair(self, image: Image, prompt: str):
+    def tokenize(self, prompt: str):
+        return self.tokenizer(prompt, truncation=True, max_length=self.tokenizer.model_max_length).input_ids
+
+    def load_image_from_path(self, path: Path):
+        image = Image.open(path)
         if not image.mode == "RGB":
             image = image.convert("RGB")
-
-        return {
-            "instance_images": self.image_transforms(image),
-            "instance_prompt_ids": self.tokenizer(
-                prompt, truncation=True, max_length=self.tokenizer.model_max_length
-            ).input_ids,
-        }
+        return self.image_transforms(image)
 
     def __getitem__(self, index):
         return {
-            **self.process_image_prompt_pair(
-                Image.open(self.instance_images_path[index % self.num_instance_images]), self.instance_prompt
-            ),
-            **self.process_image_prompt_pair(
-                Image.open(self.class_images_path[index % self.num_class_images]), self.class_prompt
-            ),
+            "instance_images": self.load_image_from_path(self.instance_images_path[index % self.num_instance_images]),
+            "instance_prompt_ids": self.instance_prompt_ids,
+            "class_images": self.load_image_from_path(self.class_images_path[index % self.num_class_images]),
+            "class_prompt_ids": self.class_prompt_ids,
         }
