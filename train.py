@@ -1,4 +1,5 @@
 from pathlib import Path
+import shutil
 from typing import Dict
 from itertools import chain
 from tqdm.auto import tqdm
@@ -80,6 +81,10 @@ class Trainer:
         self.pipeline.enable_xformers_memory_efficient_attention()
 
         save_path = Path(self.config["output_path"]) / str(epoch)
+        if epoch >= 3:
+            old_save_path = Path(self.config["output_path"]) / str(epoch - 3)
+            shutil.rmtree(old_save_path)
+            print(f"Removed weights at {old_save_path}")
         self.pipeline.save_pretrained(save_path)
         with (save_path / "config.yaml").open("w") as f:
             yaml.dump(self.config, f, default_flow_style=False)
