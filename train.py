@@ -80,15 +80,15 @@ class Trainer:
         self.pipeline.scheduler = DDIMScheduler.from_config(self.pipeline.scheduler.config)
         self.pipeline.enable_xformers_memory_efficient_attention()
 
-        save_path = Path(self.config["output_path"]) / str(epoch)
+        save_path = Path(self.config["output_path"]) / str(epoch + 1)
         if epoch >= 3:
-            old_save_path = Path(self.config["output_path"]) / str(epoch - 3)
+            old_save_path = Path(self.config["output_path"]) / str(epoch - 2)
             shutil.rmtree(old_save_path)
-            print(f"Removed weights at {old_save_path}")
+            print(f" * Removed weights at {old_save_path}")
         self.pipeline.save_pretrained(save_path)
         with (save_path / "config.yaml").open("w") as f:
             yaml.dump(self.config, f, default_flow_style=False)
-        print(f"Weights saved at {save_path}")
+        print(f" * Weights saved at {save_path}")
 
     def sample_images(self, num_images, prompt, negative_prompt, guidance_scale, num_inference_steps):
         if self.pipeline is None:

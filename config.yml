@@ -14,11 +14,11 @@ train:
     gradient_checkpointing: true
     learning_rate: 2.0e-6
     weight_decay: 1.0e-2
-    batch_size: 1
-    num_epochs: 20
+    batch_size: 2
+    num_epochs: 8
 test:
   prompt: sketch drawing of a cc lamp, black and white, hand drawn, pencil art
-  negative_prompt: realistic
-  guidance_scale: 15
+  negative_prompt: duplicate, realistic
+  guidance_scale: 10
   num_inference_steps: 100
   num_images: 10
