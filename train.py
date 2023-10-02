@@ -3,6 +3,7 @@ from typing import Dict
 from itertools import chain
 from tqdm.auto import tqdm
 import yaml
+import hashlib
 
 from data import DreamBoothDataset
 
@@ -15,7 +16,9 @@ from diffusers import AutoencoderKL, DDIMScheduler, DDPMScheduler, UNet2DConditi
 
 
 class Trainer:
-    def __init__(self, config: Dict):
+    def __init__(self, accelerator, config: Dict):
+        self.accelerator = accelerator
+        self.pipeline = None
         pretrained_model_name = config["pretrained_model_name"]
         self.config = config
         self.hyperparams = config["train"]["hyperparams"]
@@ -65,7 +68,7 @@ class Trainer:
             return
 
         pretrained_model_name = self.config["pretrained_model_name"]
-        pipeline = StableDiffusionPipeline.from_pretrained(
+        self.pipeline = StableDiffusionPipeline.from_pretrained(
             pretrained_model_name,
             unet=accelerator.unwrap_model(self.unet, keep_fp32_wrapper=True),
             text_encoder=accelerator.unwrap_model(self.text_encoder, keep_fp32_wrapper=True),
@@ -73,38 +76,40 @@ class Trainer:
             safety_checker=None,
             torch_dtype=torch.float16,
         )
-        pipeline.scheduler = DDIMScheduler.from_config(pipeline.scheduler.config)
-        pipeline.enable_xformers_memory_efficient_attention()
+        self.pipeline.scheduler = DDIMScheduler.from_config(self.pipeline.scheduler.config)
+        self.pipeline.enable_xformers_memory_efficient_attention()
 
         save_path = Path(self.config["output_path"]) / str(epoch)
-        pipeline.save_pretrained(save_path)
+        self.pipeline.save_pretrained(save_path)
         with (save_path / "config.yaml").open("w") as f:
             yaml.dump(self.config, f, default_flow_style=False)
         print(f"Weights saved at {save_path}")
 
-        if "test" not in self.config:
-            test_config = self.config["test"]
-            pipeline = pipeline.to(accelerator.device)
-            g_cuda = torch.Generator(device=accelerator.device)
-            pipeline.set_progress_bar_config(disable=True)
-            sample_path = save_path / "samples"
-            sample_path.mkdir(parents=True, exist_ok=True)
-            with torch.autocast("cuda"), torch.inference_mode():
-                for i in tqdm(range(test_config["num_test_images"]), desc="Generating samples"):
-                    images = pipeline(
-                        test_config["test_prompt"],
-                        width=self.config["size"],
-                        height=self.config["size"],
-                        num_images_per_prompt=1,
-                        negative_prompt=test_config.get("negative_test_prompt"),
-                        guidance_scale=test_config["guidance_scale"],
-                        num_inference_steps=test_config["num_inference_steps"],
-                        generator=g_cuda,
-                    ).images
-                    images[0].save(sample_path / f"{i}.png")
-            del pipeline
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+    def sample_images(self, num_images, prompt, negative_prompt, guidance_scale, num_inference_steps):
+        if self.pipeline is None:
+            raise AttributeError(f"The model is not trained")
+
+        pipeline = self.pipeline.to(self.accelerator.device)
+        g_cuda = torch.Generator(device=self.accelerator.device)
+        pipeline.set_progress_bar_config(disable=True)
+        sample_path = Path(self.config["output_path"]) / "samples"
+        sample_path.mkdir(parents=True, exist_ok=True)
+        with torch.autocast("cuda"), torch.inference_mode():
+            for i in tqdm(range(num_images), desc="Generating samples"):
+                image = pipeline(
+                    prompt,
+                    width=self.config["image_size"],
+                    height=self.config["image_size"],
+                    num_images_per_prompt=1,
+                    negative_prompt=negative_prompt,
+                    guidance_scale=guidance_scale,
+                    num_inference_steps=num_inference_steps,
+                    generator=g_cuda,
+                ).images[0]
+                image_hash = hashlib.sha1(image.tobytes()).hexdigest()
+                image.save(sample_path / f"{i}-{image_hash}.jpg")
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def calculate_loss_on_batch(self, batch, dtype):
         with torch.no_grad():
@@ -132,29 +137,42 @@ class Trainer:
         prior_loss = F.mse_loss(model_pred_prior.float(), target_prior.float())
         return instance_loss + self.hyperparams["prior_loss_weight"] * prior_loss
 
-    def train_one_epoch(self, accelerator, dtype):
+    def train_one_epoch(self):
+        dtype = torch.float16 if self.accelerator.mixed_precision == "fp16" else torch.float32
         self.unet.train()
         self.text_encoder.train()
         total_loss = 0
+        total = 0
         for batch in self.train_dataloader:
-            with accelerator.accumulate(self.unet):
+            with self.accelerator.accumulate(self.unet):
                 loss = self.calculate_loss_on_batch(batch, dtype)
-                accelerator.backward(loss)
+                self.accelerator.backward(loss)
                 self.optimizer.step()
                 self.optimizer.zero_grad(set_to_none=True)
                 total_loss += loss.detach().item() * batch["size"]
-        return total_loss / len(self.train_dataloader)
+                total += batch["size"]
+        return total_loss / total
 
-    def train(self, accelerator):
-        dtype = torch.float16 if accelerator.mixed_precision == "fp16" else torch.float32
-
-        self.vae.to(accelerator.device, dtype=dtype)
-        self.unet, self.text_encoder, self.optimizer, self.train_dataloader = accelerator.prepare(
+    def train(self):
+        dtype = torch.float16 if self.accelerator.mixed_precision == "fp16" else torch.float32
+        self.vae.to(self.accelerator.device, dtype=dtype)
+        self.unet, self.text_encoder, self.optimizer, self.train_dataloader = self.accelerator.prepare(
             self.unet, self.text_encoder, self.optimizer, self.train_dataloader
         )
 
         num_epochs = self.hyperparams["num_epochs"]
-        for epoch in tqdm(range(num_epochs), disable=not accelerator.is_local_main_process, desc="Epochs"):
+        for epoch in tqdm(range(num_epochs), disable=not self.accelerator.is_local_main_process, desc="Epochs"):
             print(f"\nEpoch [{epoch + 1:>{len(str(num_epochs))}}/{num_epochs}]")
-            avg_loss = self.train_one_epoch(accelerator, dtype)
+            avg_loss = self.train_one_epoch()
             print(f"\tLoss: {avg_loss:.4f}")
+            self.save_weights(self.accelerator, epoch)
+
+    def test(self):
+        test_config: Dict = self.config["test"]
+        self.sample_images(
+            test_config["num_images"],
+            test_config["prompt"],
+            test_config.get("negative_prompt"),
+            test_config["guidance_scale"],
+            test_config["num_inference_steps"],
+        )

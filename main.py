@@ -45,8 +45,9 @@ def generate_class_images(accelerator: Accelerator, config: Dict):
 def main(config):
     accelerator = Accelerator()
     generate_class_images(accelerator, config)
-    trainer = Trainer(config)
-    trainer.train(accelerator)
+    trainer = Trainer(accelerator, config)
+    trainer.train()
+    trainer.test()
 
 
 if __name__ == "__main__":
